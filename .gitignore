@@ -1,8 +1,3 @@
-myenv/
-env
-bardmail-service.json
-client_secret.json
-gmail_secret.json
-outbard-324b8c90d9ac.json
-
+GEMINI_API_KEY = "AIzaSyCju5scpyj178pLfPfTUi7-8QPL72P05eA"/
 .streamlit/*
+myEnv/
