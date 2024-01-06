@@ -1,7 +1,12 @@
 import streamlit as st
+from streamlit_modal import Modal
 import firebase_admin
-from firebase_admin import credentials, auth
+from firebase_admin import credentials, auth, firestore
 from geminiGenerate.generate import generateOutput
+from google.oauth2 import id_token
+import google_auth_oauthlib.flow
+import googleapiclient.discovery
+from google.auth.transport import requests
 import random
 import time
 
@@ -40,9 +45,13 @@ if not firebase_admin._apps:
     cred = credentials.Certificate(firebase_config)
     firebase_admin.initialize_app(cred)
 
-# Initialize session_state
+# Initialize Firestore
+db = firestore.client()
+
+# Initialize user in session_state
 if "user" not in st.session_state:
     st.session_state.user = None
+    
 
 st.set_page_config(
             page_title="OutBard",
@@ -51,7 +60,6 @@ st.set_page_config(
 
 def authentication_page():
     st.title("Login or signup to continue")
-    # st.sidebar.title("OutBardAuthentication")
     
     email = st.text_input("Enter your email:")
     password = st.text_input("Enter your password:", type="password")
@@ -62,19 +70,20 @@ def authentication_page():
         login_button = st.button("Login", help="Login to your account",)
 
     with col2:
-        signup_button = st.button("Signup", help="Create an account",type="primary",)
-
+        signup_button = st.button("Signup", help="Create an account",type="secondary",)
+    
+    
     if signup_button:
         try:
             user = auth.create_user(email=email, password=password)
             st.success(f"User created successfully: {user.email}")
             st.session_state.user = user
-            # st.success("Signup successful!")
+            update_user_session(user.uid, True)  # Update user session in Firestore
 
             st.empty()
             with st.spinner("Please wait..."):
                 time.sleep(2)
-                st.experimental_rerun()
+                st.rerun()
             main_app()
 
         except Exception as e:
@@ -85,42 +94,100 @@ def authentication_page():
             user = auth.get_user_by_email(email)
             st.session_state.user = user
             st.success(f"Login successfuly as {user.email}")
+            update_user_session(user.uid, True)  # Update user session in Firestore
 
             st.empty()
             with st.spinner("Please wait..."):
                 time.sleep(2)
-                st.experimental_rerun()
+                st.rerun()
             main_app()
 
         except Exception as e:
             st.error(f"Login failed: {e}")
-            
+# Function to check user session in Firestore
+def check_user_session(uid):
+    user_session_ref = db.collection("user_sessions").document(uid)
+    user_session_data = user_session_ref.get()
+    return user_session_data.exists
+
+def update_user_session(uid, authenticated):
+    user_session_ref = db.collection("user_sessions").document(uid)
+    user_session_ref.set({"authenticated": authenticated})
+
+def save_chat_history(uid, role, content):
+    chat_history_ref = db.collection("chat_history").document(uid)
+    chat_history = chat_history_ref.get()
+
+    if chat_history.exists:
+        chat_data = chat_history.to_dict()
+        messages = chat_data.get("messages", [])
+        messages.append({"role": role, "content": content})
+        chat_history_ref.update({"messages": messages})
+    else:
+        chat_history_ref.set({"messages": [{"role": role, "content": content}]})
+
 def main_app():
 
     st.title("Welcome to OutBard")
-    st.sidebar.title("OutBard")
+
+    with st.sidebar:
+
+        col1, col2 = st.columns(2,gap="small")
+        with col1:
+            st.title("OutBard")
+        with col2:
+            logout_button = st.button("Logout", help="Logout",type="primary",)
+            # Logout button
+            if logout_button:
+                st.success("Logout successful!")
+                update_user_session(user.uid, False)
+                st.session_state.user = None
+                st.rerun()
+        
+
 
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    full_response = ""
+    # Retrieve chat history from Firestore
+    chat_history_ref = db.collection("chat_history").document(st.session_state.user.uid)
+    chat_history_data = chat_history_ref.get()
 
-    # Accept user input
+    if chat_history_data.exists:
+        chat_data = chat_history_data.to_dict()
+        messages = chat_data.get("messages", [])
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
+            with st.chat_message(role):
+                st.markdown(content)
+    else:
+        st.info("No chat history available.")
+
+    full_response = ""
+     # Accept user input
     if prompt := st.chat_input("What's up?"):
+        # Save user message to Firestore
+        save_chat_history(st.session_state.user.uid, "user", prompt)
+
         # Display user message in chat message container
         with st.chat_message("user"):
             st.markdown(prompt)
+
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
+
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
 
             with st.spinner('Wait for it...'):
-                # time.sleep(2)
                 assistant_response = generateOutput(prompt)
 
+            # Save assistant response to Firestore
+            save_chat_history(st.session_state.user.uid, "assistant", assistant_response)
+            
             # Simulate stream of response with milliseconds delay
             for chunk in assistant_response.split():
                 full_response += chunk + " "
@@ -132,7 +199,20 @@ def main_app():
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-if st.session_state.user:
-    main_app()
+
+
+# Check if user is already authenticated
+if st.session_state.user :
+    # Retrieve user data from Firebase Authentication
+    try:
+        user = auth.get_user(st.session_state.user.uid)
+        st.session_state.user = user
+        # Check user session in Firestore
+        if not check_user_session(user.uid):
+            # Update user session in Firestore
+            update_user_session(user.uid, True)
+        main_app()
+    except Exception as e:
+        st.warning(f"User authentication failed: {e}")
 else:
     authentication_page()
