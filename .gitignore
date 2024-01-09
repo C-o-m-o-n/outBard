@@ -1,3 +1,5 @@
 GEMINI_API_KEY = "AIzaSyCju5scpyj178pLfPfTUi7-8QPL72P05eA"/
-.streamlit/*
+.streamlit/secrets.toml
+.streamlit/client_secrets.json
+.streamlit/serviceAccount.json
 myEnv/

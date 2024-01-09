@@ -3,19 +3,12 @@ import streamlit as st
 from streamlit_modal import Modal
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-
-# from firebase import Firebase
 from geminiGenerate.generate import generateOutput
-
 from google.oauth2 import id_token
-import google_auth_oauthlib.flow
-import googleapiclient.discovery
 from google.auth.transport import requests
-import random
 import time
 
 SERVICE_ACCOUNT_KEY_PATH = st.secrets["SERVICE_ACCOUNT_KEY_PATH"]
-
 FIREBASE_TYPE = st.secrets["FIREBASE_TYPE"]
 FIREBASE_PROJECT_ID = st.secrets["FIREBASE_PROJECT_ID"]
 FIREBASE_PRIVATE_KEY_ID = st.secrets["FIREBASE_PRIVATE_KEY_ID"]
@@ -66,10 +59,14 @@ if "active_conversation" not in st.session_state:
 if "selected_conversation" not in st.session_state:
     st.session_state.selected_conversation = None
 
+#initialize conversation name in session_state
+if "conversation_name" not in st.session_state:
+    st.session_state.conversation_name = None
 
 st.set_page_config(
             page_title="OutBard",
-            page_icon="ocean",
+            page_icon="🌊",
+            
         )
 
 def authentication_page():
@@ -80,9 +77,12 @@ def authentication_page():
                 user = auth.get_user_by_email(email)
                 st.session_state.user = user
                 update_user_session(user.uid, True)  # Update user session in Firestore
-                st.balloons()
+                if not st.session_state.user.email_verified:
+                    resend_verification_email()
+                else:
+                    st.snow()
             except Exception as e:
-                st.error(f"Login failed: {e}")
+                st.info(f"click again to confirm Login")
 
         def signup_callback():
             try:
@@ -90,12 +90,14 @@ def authentication_page():
                 st.success(f"User created successfully: {user.email}")
                 st.session_state.user = user
                 update_user_session(user.uid, True)  # Update user session in Firestore
-                st.balloons()
+                if not st.session_state.user.email_verified:
+                    resend_verification_email()
+                else:
+                    st.snow()
             except Exception as e:
-                st.error(f"Signup failed: {e}")
+                st.info(f"click again to confirm Signup")
 
         email = st.text_input(":blue[Enter your email]")
-        
         password = st.text_input(":blue[Enter your password]", type="password")
         col1, col2, col3, col4, col5 = st.columns(5,gap="small")
         with col2:
@@ -127,9 +129,6 @@ def save_chat_history(conversation_id, uid, role, content):
     else:
         chat_history_ref.set({"messages": [{"role": role, "content": content}]})
     
-    # Save messages in the "conversations" collection with the specified conversation ID
-    #*** save with the id as name
-    # conversation_ref = db.collection("users").document(st.session_state.user.email).collection("conversations").document(str(conversation_id))
     #*** save with a different name
     user_email = st.session_state.user.email if st.session_state.user else None
     conversation_ref = db.collection("users").document(user_email).collection("conversations").document(str(conversation_id))
@@ -139,7 +138,7 @@ def save_chat_history(conversation_id, uid, role, content):
         conversation_data = conversation.to_dict()
         messages = conversation_data.get("messages", [])
         messages.append({"role": role, "content": content})
-        conversation_ref.update({"messages": messages})
+        conversation_ref.update({"messages": messages,})
         # st.success(f"Conversation saved to id: {conversation_id}")
     else:
         conversation_ref.set({"messages": [{"role": role, "content": content}]}, merge=True)
@@ -150,54 +149,57 @@ def resend_verification_email():
         try:
             # auth.send_email_verification(st.session_state.user['idToken'])
             st.write(auth.generate_email_verification_link(user.email))
-            st.success("Click the link above to verify your email.")
+            st.success("It seems your email is not verified. Click the link above to verify.")
         except Exception as e:
             st.error(f"Failed to resend verification email: {e}")
 
 #sidebar conversations
-def create_new_conversation():
+def create_new_conversation(conv_name):
     # Generate a new conversation ID
-    conversation_id = str(uuid.uuid4())
+    if conv_name:
+        conversation_id = str(conv_name)
+    else:
+        conversation_id = "Untitled--" + str(uuid.uuid4())
     st.session_state.conversation_id = conversation_id
-    # st.success(f"new id {st.session_state.conversation_id}")
     st.rerun()
 
 def list_conversations():
     # import streamlit as st
     st.sidebar.title("Conversations")
 
-    # Display a button to create a new conversation
-    if st.button("Start a new conversation", key="new_conversation"):
-        create_new_conversation()
+    if st.session_state.user.email_verified:
+        # Display a button to create a new conversation
+        conv_name = st.text_input(label="rename", label_visibility="hidden", placeholder="Enter conversation name to start")
+        if st.button("Start conversation", key="new_conversation"):
+            create_new_conversation(conv_name=conv_name)
 
-    # Retrieve user's conversations from Firestore
-    user_email = st.session_state.user.email if st.session_state.user else None
-    if user_email:
-        user_doc_ref = db.collection("users").document(user_email)
-        conversations_ref = user_doc_ref.collection("conversations")
-        
-        # Get all documents from the "conversations" subcollection
-        conversations = conversations_ref.stream()
+        # Retrieve user's conversations from Firestore
+        user_email = st.session_state.user.email if st.session_state.user else None
+        if user_email:
+            user_doc_ref = db.collection("users").document(user_email)
+            conversations_ref = user_doc_ref.collection("conversations")
+            
+            # Get all documents from the "conversations" subcollection
+            conversations = conversations_ref.stream()
 
-        if conversations:
-            user_conversations = [conversation.id for conversation in conversations]
+            if conversations:
+                user_conversations = [conversation.id for conversation in conversations]
 
-            selected_conversation = st.sidebar.selectbox("Select a previous conversation", user_conversations, index=None, placeholder="Lets talk about this")
-            if selected_conversation:
-                if not st.session_state.conversation_id:
-                    st.session_state.conversation_id = selected_conversation
-                    # st.spinner("loading")
-                    st.rerun()
-                else:
-                    st.session_state.conversation_id = selected_conversation
-                    st.session_state.selected_conversation = selected_conversation
-                    # st.warning(f"Selected conversation: {selected_conversation}")
-                    # st.info(f"state conversation: {st.session_state.conversation_id}")
+                selected_conversation = st.sidebar.selectbox("Select a previous conversation", user_conversations, index=None, placeholder="Lets talk about this")
+                if selected_conversation:
+                    if not st.session_state.conversation_id:
+                        st.session_state.conversation_id = selected_conversation
+                        st.rerun()
+                    else:
+                        st.session_state.conversation_id = selected_conversation
+                        st.session_state.selected_conversation = selected_conversation
+            else:
+                st.info("No conversations available.")
+
         else:
-            st.info("No conversations available.")
-
+            st.info("No user available.")
     else:
-        st.info("No user available.")
+        st.sidebar.warning("Please verify your email to continue.")
 
 #what to display before the user creates a conversation 
 def display_welcome_message():
@@ -206,24 +208,17 @@ def display_welcome_message():
     with st.sidebar:
         col1, col2, col3 = st.columns(3,gap="medium")
         with col2:
-            st.write(":ocean:")
-            st.markdown("------")
-        # with col2:
-        #     logout_button = st.button("Logout", help="Logout",type="primary",)
-        #     # Logout button
-        #     if logout_button:
-        #         user = st.session_state.user
-        #         update_user_session(user.uid, False)
-        #         st.success("Logout successful!")
-        #         st.session_state.user = None
+            st.image('images/outbard-icon.png', use_column_width='auto', width=40)
+        st.divider()
               
         list_conversations()
         if st.session_state.conversation_id:
             st.empty()
     
     with st.container(border=True):
-        st.write(":green[OutBard is an AI writing assistant web application powered by a Gemini-pro. It allows users to generate code, quotes, text for blog posts, emails, or any other writing project. Users can also chat with OutBard to get creative responses.]")
+        st.write("🌊 :green[OutBard is an AI writing assistant web application powered by a Gemini-pro. It allows users to generate code, quotes, text for blog posts, emails, or any other writing project. Users can also chat with OutBard to get creative responses.]")
 
+    
     st.subheader(":bird: What OutBard does")
     #more features coming soon
     col1, col2 = st.columns(2, gap="medium")
@@ -232,51 +227,41 @@ def display_welcome_message():
         with st.container(border=True):
                 st.write(":book: :green[Generate text for your next blog post, email, or any other writing project.]")
         with st.container(border=True):
-            st.write(":speech_balloon: :green[Chat with OutBard to get personalized responses.]")
-        with st.container(border=True):
+        #     st.write(":speech_balloon: :green[Chat with OutBard to get personalized responses.]")
+        # with st.container(border=True):
             st.write(":computer: :green[Generate code for your next github project.]")
     with col2:
         st.subheader(":large_blue_circle: :grey[Comming features]")
         with st.container(border=True):
-            st.write(":frame_with_picture: :grey[Generate images for your pinterest design projects .]")
+            st.write(":frame_with_picture: :grey[Use images as prompt for specific and personalised responses.]")
         with st.container(border=True):
-            st.write(":film_projector: :grey[Generate videos for your next Youtube channel video.]")
-        with st.container(border=True):
-            st.write(":japan: :grey[Generate audios for your next spotify podcast .]")
+            st.write(":email: :grey[Send generated content to your email or to your peers.]")
 
-    st.toast("Made by Collins Omondi")
+    st.toast("🎈 Collins Omondi")
     col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
     with col3:
+        st.write("")
+        st.write("")
+        st.write("")
+        st.write("")
+        st.image('images/comontech-logo.png', use_column_width='auto', width=30)
         st.caption(":flag-ke: Pruodly Kenyan")
 
+
 def main_app(conversation_id):
-
     st.title("Welcome to OutBard")
-    # st.write("active conversation id: ", conversation_id)
-
     with st.sidebar:
-        #increase the size of th emoji
         col1, col2, col3 = st.columns(3)
-        # with col1:
-        #     st.title("OutBard")
         with col2:
-            st.write("🌊")
-        
-        # with col2:
-        #     logout_button = st.button("Logout", help="Logout",type="primary",)
-        #     # Logout button
-        #     if logout_button:
-        #         user = st.session_state.user
-        #         update_user_session(user.uid, False)
-        #         st.success("Logout successful!")
-        #         st.session_state.user = None
+            st.image('images/outbard-icon.png', use_column_width='auto', width=40)
+        st.divider()
+
         list_conversations()
         # st.info("Hello, welcome to OutBard. You can use it to generate text for your next blog post, email, or any other writing project. Just type in your prompt and OutBard will generate a response for you. You can also use the app to chat with OutBard. OutBard is a Gemini-pro based AI writing assistant. I'm currently working on some more cool features to make it \"OutBard\". I hope you enjoy using it. If you have any feedback or suggestions, please feel free to reach out to me at [comon928@gmail.com](mailto:comon928@gmail.com)")
 
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = {}
-
     # Retrieve chat history from Firestore
     # chat_history_ref = db.collection("chat_history").document(st.session_state.user.uid)
     # chat_history_data = chat_history_ref.get()
@@ -293,7 +278,10 @@ def main_app(conversation_id):
         messages = active_conversation_data.get("messages", [])
         for message in messages:
             st.session_state.messages[conversation_id] = messages  # Save messages for the specific conversation
-            role = message["role"]
+            role = "user"
+            if message["role"] == "assistant":
+                role = "🌊"
+
             content = message["content"]
             with st.chat_message(role):
                 st.markdown(content)
@@ -322,7 +310,7 @@ def main_app(conversation_id):
             conversation_messages.append({"role": "user", "content": prompt})
 
             # Display assistant response in chat message container
-            with st.chat_message("assistant"):
+            with st.chat_message("🌊"):
                 message_placeholder = st.empty()
 
                 with st.spinner('Generating....'):
@@ -345,8 +333,6 @@ def main_app(conversation_id):
         conversation_messages.append({"role": "assistant", "content": full_response})
 
 if st.session_state.conversation_id:
-    # conversation_id = st.session_state.selected_conversation
-    # st.session_state.conversation_id = conversation_id
     main_app(st.session_state.conversation_id)
 
 # Check if user is already authenticated
