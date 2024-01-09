@@ -1,6 +1,8 @@
 
 # OutBard
 
+![outbard-transformed](https://github.com/C-o-m-o-n/outBard/assets/94454803/44c0ede1-baaa-42bf-a37b-8782b659e0f4)
+
 OutBard is a Streamlit-based application powered by a Gemini-pro AI writing assistant. It allows users to generate text for blog posts, emails, or any other writing project. Users can also chat with OutBard to get creative responses.
 
 https://github.com/C-o-m-o-n/outBard/assets/94454803/57f94e0e-5a31-4b92-979a-d6c7b74d694e
