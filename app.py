@@ -249,7 +249,7 @@ def display_welcome_message():
 
 
 def main_app(conversation_id):
-    st.title("Welcome to OutBard")
+    st.title(f"🌊: {conversation_id}")
     with st.sidebar:
         col1, col2, col3 = st.columns(3)
         with col2:
